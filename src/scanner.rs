@@ -11,6 +11,8 @@ pub struct Track {
     pub path: PathBuf,
     pub title: String,
     pub artist: String,
+    pub album: String,
+    pub year: Option<u32>,
     pub duration: u64,
     pub lyrics: Option<String>,
 }
@@ -25,6 +27,8 @@ impl Track {
 
         let mut title = filename.clone();
         let mut artist = String::from("Unknown Artist");
+        let mut album = String::from("Unknown Album");
+        let mut year = None;
         let mut duration = 0;
         let mut lyrics = None;
 
@@ -38,6 +42,10 @@ impl Track {
                 if let Some(a) = tag.artist() {
                     artist = a.to_string();
                 }
+                if let Some(al) = tag.album() {
+                    album = al.to_string();
+                }
+                year = tag.year();
                 lyrics = tag.get_string(&ItemKey::Lyrics).map(|s| s.to_string());
             }
         }
@@ -46,6 +54,8 @@ impl Track {
             path: path.to_path_buf(),
             title,
             artist,
+            album,
+            year,
             duration,
             lyrics,
         }

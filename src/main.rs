@@ -35,7 +35,7 @@ fn main() -> io::Result<()> {
 
     let tracks = scan_music_directory(&config);
 
-    let mut app = App::new(tracks);
+    let mut app = App::new(tracks, config);
     app.sort_tracks();
 
     enable_raw_mode()?;

@@ -104,14 +104,6 @@ impl Player {
         self.sink.set_volume(self.volume);
     }
 
-    pub fn increase_volume(&mut self) {
-        self.set_volume(self.volume + 0.1);
-    }
-
-    pub fn decrease_volume(&mut self) {
-        self.set_volume(self.volume - 0.1);
-    }
-
     pub fn toggle_mute(&mut self) {
         if self.muted {
             self.set_volume(self.pre_mute_volume);

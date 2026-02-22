@@ -37,10 +37,22 @@ fn handle_key(app: &mut App, code: KeyCode) {
         }
     }
 
+    if app.show_queue {
+        match code {
+            KeyCode::Char('v') | KeyCode::Esc => {
+                app.toggle_queue();
+                return;
+            }
+            _ => {}
+        }
+    }
+
     match code {
         KeyCode::Char('q') => app.quit(),
         KeyCode::Char('h') => app.toggle_help(),
         KeyCode::Char('l') => app.toggle_lyrics(),
+        KeyCode::Char('v') => app.toggle_queue(),
+        KeyCode::Char('t') => app.toggle_progress_mode(),
         KeyCode::Char('o') => app.cycle_sort_mode(),
 
         KeyCode::Char(' ') => app.toggle_pause(),

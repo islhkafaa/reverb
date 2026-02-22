@@ -1,6 +1,7 @@
 use rand::seq::{IteratorRandom, SliceRandom};
 use ratatui::widgets::ListState;
 
+use crate::config::Config;
 use crate::player::{PlaybackState, Player};
 use crate::scanner::Track;
 
@@ -43,15 +44,18 @@ pub struct App {
     pub sort_mode: SortMode,
     pub show_help: bool,
     pub show_lyrics: bool,
+    pub show_queue: bool,
     pub status_message: Option<(String, std::time::Instant)>,
     pub queue: Vec<usize>,
     pub queue_index: Option<usize>,
+    pub config: Config,
+    pub show_remaining_time: bool,
 }
 
 use crate::state::AppState;
 
 impl App {
-    pub fn new(tracks: Vec<Track>) -> Self {
+    pub fn new(tracks: Vec<Track>, config: Config) -> Self {
         let state = AppState::load();
 
         let mut list_state = ListState::default();
@@ -107,9 +111,12 @@ impl App {
             sort_mode: state.sort_mode,
             show_help: false,
             show_lyrics: false,
+            show_queue: false,
             status_message: None,
             queue,
             queue_index,
+            config,
+            show_remaining_time: false,
         }
     }
 
@@ -158,8 +165,18 @@ impl App {
         match self.player.play(&track.path, &track.title) {
             Ok(_) => {
                 self.playing_index = Some(index);
-                if let Some(pos) = self.queue.iter().position(|&i| i == index) {
-                    self.queue_index = Some(pos);
+                if self.shuffle {
+                    let mut rng = rand::thread_rng();
+                    self.queue.shuffle(&mut rng);
+                    // Move the selected track to the front of the queue
+                    if let Some(pos) = self.queue.iter().position(|&i| i == index) {
+                        self.queue.swap(0, pos);
+                    }
+                    self.queue_index = Some(0);
+                } else {
+                    if let Some(pos) = self.queue.iter().position(|&i| i == index) {
+                        self.queue_index = Some(pos);
+                    }
                 }
             }
             Err(e) => {
@@ -178,6 +195,11 @@ impl App {
 
         let final_q_idx = if next_q_idx >= self.queue.len() {
             if self.repeat_mode == RepeatMode::All {
+                // Reshuffle queue if we wrap around with shuffle mode on
+                if self.shuffle {
+                    let mut rng = rand::thread_rng();
+                    self.queue.shuffle(&mut rng);
+                }
                 0
             } else {
                 return;
@@ -221,9 +243,11 @@ impl App {
 
     pub fn change_volume(&mut self, increase: bool) {
         if increase {
-            self.player.increase_volume();
+            self.player
+                .set_volume(self.player.volume + self.config.volume_increment);
         } else {
-            self.player.decrease_volume();
+            self.player
+                .set_volume(self.player.volume - self.config.volume_increment);
         }
     }
 
@@ -287,21 +311,24 @@ impl App {
     }
 
     pub fn check_playback(&mut self) {
-        if self.player.is_finished() {
-            let current_index = self.playing_index.unwrap_or(0);
-            let is_last_track = current_index + 1 >= self.tracks.len();
+        if !self.player.is_finished() {
+            return;
+        }
 
-            if !self.shuffle && self.repeat_mode == RepeatMode::Off && is_last_track {
-                self.playing_index = None;
-                self.player.state = PlaybackState::Stopped;
-            } else {
-                if self.repeat_mode == RepeatMode::One {
-                    self.player.seek(std::time::Duration::ZERO);
-                    self.player.state = PlaybackState::Playing;
-                    return;
-                }
-                self.play_next();
-            }
+        if self.repeat_mode == RepeatMode::One {
+            self.player.seek(std::time::Duration::ZERO);
+            self.player.state = PlaybackState::Playing;
+            return;
+        }
+
+        let current_index = self.playing_index.unwrap_or(0);
+        let is_last_track = current_index + 1 >= self.tracks.len();
+
+        if !self.shuffle && self.repeat_mode == RepeatMode::Off && is_last_track {
+            self.playing_index = None;
+            self.player.stop();
+        } else {
+            self.play_next();
         }
     }
 
@@ -321,9 +348,12 @@ impl App {
             self.queue.shuffle(&mut rng);
 
             if let Some(current_idx) = self.playing_index {
+                // To avoid playback stopping right away if the current track happens
+                // to land near the end of the random sequence, we force it to the front
                 if let Some(pos) = self.queue.iter().position(|&i| i == current_idx) {
-                    self.queue_index = Some(pos);
+                    self.queue.swap(0, pos);
                 }
+                self.queue_index = Some(0);
             }
         } else {
             self.queue = (0..self.tracks.len()).collect();
@@ -335,6 +365,7 @@ impl App {
         self.show_help = !self.show_help;
         if self.show_help {
             self.show_lyrics = false;
+            self.show_queue = false;
         }
     }
 
@@ -342,7 +373,20 @@ impl App {
         self.show_lyrics = !self.show_lyrics;
         if self.show_lyrics {
             self.show_help = false;
+            self.show_queue = false;
         }
+    }
+
+    pub fn toggle_queue(&mut self) {
+        self.show_queue = !self.show_queue;
+        if self.show_queue {
+            self.show_help = false;
+            self.show_lyrics = false;
+        }
+    }
+
+    pub fn toggle_progress_mode(&mut self) {
+        self.show_remaining_time = !self.show_remaining_time;
     }
 
     pub fn cycle_sort_mode(&mut self) {

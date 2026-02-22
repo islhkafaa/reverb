@@ -21,6 +21,8 @@ pub fn render(frame: &mut Frame, app: &mut App) {
 
     if app.show_lyrics {
         render_lyrics(frame, app, chunks[0]);
+    } else if app.show_queue {
+        render_queue(frame, app, chunks[0]);
     } else {
         render_playlist(frame, app, chunks[0]);
     }
@@ -52,12 +54,15 @@ fn render_playlist(frame: &mut Frame, app: &mut App, area: ratatui::layout::Rect
 
             let style = match (is_selected, is_playing) {
                 (true, true) => Style::default()
-                    .fg(Color::Rgb(100, 255, 100))
-                    .add_modifier(Modifier::BOLD),
+                    .fg(parse_hex_color(&app.config.colors.primary))
+                    .add_modifier(Modifier::BOLD)
+                    .add_modifier(Modifier::REVERSED),
                 (true, false) => Style::default()
-                    .fg(Color::Rgb(255, 200, 100))
+                    .fg(parse_hex_color(&app.config.colors.primary))
                     .add_modifier(Modifier::BOLD),
-                (false, true) => Style::default().fg(Color::Rgb(150, 255, 150)),
+                (false, true) => Style::default()
+                    .fg(parse_hex_color(&app.config.colors.secondary))
+                    .add_modifier(Modifier::BOLD),
                 (false, false) => Style::default().fg(Color::Rgb(200, 200, 200)),
             };
 
@@ -73,7 +78,7 @@ fn render_playlist(frame: &mut Frame, app: &mut App, area: ratatui::layout::Rect
             Block::default()
                 .borders(Borders::ALL)
                 .title(" Playlist ")
-                .border_style(Style::default().fg(Color::Rgb(100, 150, 255)))
+                .border_style(Style::default().fg(parse_hex_color(&app.config.colors.primary)))
                 .border_type(ratatui::widgets::BorderType::Rounded),
         )
         .highlight_symbol("▸ ")
@@ -81,6 +86,66 @@ fn render_playlist(frame: &mut Frame, app: &mut App, area: ratatui::layout::Rect
         .highlight_style(Style::default().add_modifier(Modifier::BOLD));
 
     frame.render_stateful_widget(list, area, &mut app.list_state);
+}
+
+fn render_queue(frame: &mut Frame, app: &mut App, area: ratatui::layout::Rect) {
+    let current_q_idx = app.queue_index.unwrap_or(0);
+
+    let items: Vec<ListItem> = app
+        .queue
+        .iter()
+        .enumerate()
+        .map(|(q_idx, &track_idx)| {
+            let track = &app.tracks[track_idx];
+
+            let is_playing = q_idx == current_q_idx;
+            let is_past = q_idx < current_q_idx;
+
+            let style = if is_playing {
+                Style::default()
+                    .fg(Color::Rgb(100, 255, 100))
+                    .add_modifier(Modifier::BOLD)
+            } else if is_past {
+                Style::default().fg(Color::Rgb(100, 100, 100))
+            } else {
+                Style::default().fg(Color::Rgb(200, 200, 200))
+            };
+
+            let prefix = if is_playing {
+                "▶ "
+            } else if is_past {
+                "✓ "
+            } else {
+                "  "
+            };
+
+            let mut display_name = track.display_name().to_string();
+            if is_playing {
+                display_name.push_str(" (Playing)");
+            }
+
+            let content = format!("{}{}", prefix, display_name);
+            ListItem::new(Line::from(Span::styled(content, style)))
+        })
+        .collect();
+
+    let list = List::new(items)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(" Up Next (Queue) ")
+                .border_style(Style::default().fg(Color::Rgb(255, 200, 100)))
+                .border_type(ratatui::widgets::BorderType::Rounded),
+        )
+        .highlight_symbol("▸ ")
+        .highlight_spacing(HighlightSpacing::Always)
+        .highlight_style(Style::default().add_modifier(Modifier::BOLD));
+
+    // Scroll to the current playing track in the queue
+    let mut state = ratatui::widgets::ListState::default();
+    state.select(Some(current_q_idx));
+
+    frame.render_stateful_widget(list, area, &mut state);
 }
 
 fn parse_lrc(lrc: &str) -> Vec<(std::time::Duration, String)> {
@@ -241,19 +306,25 @@ fn render_now_playing(frame: &mut Frame, app: &App, area: ratatui::layout::Rect)
         PlaybackState::Stopped => ("Stopped", Color::Rgb(150, 150, 150), "⏹"),
     };
 
-    let track_name = app
-        .player
-        .current_track
-        .as_deref()
-        .unwrap_or("No track selected");
+    let track_info = if let Some(index) = app.playing_index {
+        let t = &app.tracks[index];
+        let mut info = format!("{} {} {}", state_icon, state_label, t.title);
+        if let Some(y) = t.year {
+            info.push_str(&format!(" ({})", y));
+        }
+        info.push_str(&format!("\nArtist: {} | Album: {}", t.artist, t.album));
+        info
+    } else {
+        "No track selected".to_string()
+    };
 
     let next_track_info = if let Some(q_idx) = app.queue_index {
         if q_idx + 1 < app.queue.len() {
             let next_idx = app.queue[q_idx + 1];
-            format!("Next: {}", app.tracks[next_idx].title)
+            format!("\nNext: {}", app.tracks[next_idx].title)
         } else if app.repeat_mode == crate::app::RepeatMode::All && !app.queue.is_empty() {
             let next_idx = app.queue[0];
-            format!("Next: {}", app.tracks[next_idx].title)
+            format!("\nNext: {}", app.tracks[next_idx].title)
         } else {
             String::new()
         }
@@ -261,14 +332,7 @@ fn render_now_playing(frame: &mut Frame, app: &App, area: ratatui::layout::Rect)
         String::new()
     };
 
-    let info_text = if next_track_info.is_empty() {
-        format!("{} {} {}", state_icon, state_label, track_name)
-    } else {
-        format!(
-            "{} {} {}\n{}",
-            state_icon, state_label, track_name, next_track_info
-        )
-    };
+    let info_text = format!("{}{}", track_info, next_track_info);
 
     let info = Paragraph::new(info_text)
         .style(
@@ -304,10 +368,20 @@ fn render_now_playing(frame: &mut Frame, app: &App, area: ratatui::layout::Rect)
     let total_mins = total_duration_secs / 60;
     let total_sec = total_duration_secs % 60;
 
-    let time_text = format!(
-        "{:02}:{:02} / {:02}:{:02}",
-        elapsed_mins, elapsed_sec, total_mins, total_sec
-    );
+    let time_text = if app.show_remaining_time && total_duration_secs > elapsed_secs {
+        let remaining = total_duration_secs - elapsed_secs;
+        let rem_mins = remaining / 60;
+        let rem_sec = remaining % 60;
+        format!(
+            "{:02}:{:02} / -{:02}:{:02}",
+            elapsed_mins, elapsed_sec, rem_mins, rem_sec
+        )
+    } else {
+        format!(
+            "{:02}:{:02} / {:02}:{:02}",
+            elapsed_mins, elapsed_sec, total_mins, total_sec
+        )
+    };
     let time_display = Paragraph::new(time_text)
         .style(Style::default().fg(Color::Rgb(150, 150, 150)))
         .alignment(ratatui::layout::Alignment::Center);
@@ -332,7 +406,7 @@ fn render_now_playing(frame: &mut Frame, app: &App, area: ratatui::layout::Rect)
     let block = Block::default()
         .borders(Borders::ALL)
         .title(" Now Playing ")
-        .border_style(Style::default().fg(Color::Rgb(255, 100, 200)))
+        .border_style(Style::default().fg(parse_hex_color(&app.config.colors.secondary)))
         .border_type(ratatui::widgets::BorderType::Rounded);
 
     frame.render_widget(block, area);
@@ -517,6 +591,20 @@ fn render_help_overlay(frame: &mut Frame, area: ratatui::layout::Rect) {
             ),
             Span::raw("Toggle lyrics"),
         ]),
+        Line::from(vec![
+            Span::styled(
+                " v          ",
+                Style::default().fg(Color::Rgb(255, 200, 100)),
+            ),
+            Span::raw("Toggle queue view"),
+        ]),
+        Line::from(vec![
+            Span::styled(
+                " t          ",
+                Style::default().fg(Color::Rgb(255, 200, 100)),
+            ),
+            Span::raw("Toggle progress mode"),
+        ]),
         Line::from(""),
         Line::from(vec![
             Span::styled(
@@ -588,4 +676,20 @@ fn centered_rect(
             Constraint::Percentage((100 - percent_x) / 2),
         ])
         .split(popup_layout[1])[1]
+}
+
+fn parse_hex_color(hex: &str) -> Color {
+    let hex = hex.trim_start_matches('#');
+    if hex.len() != 6 {
+        return Color::Reset;
+    }
+
+    if let Ok(r) = u8::from_str_radix(&hex[0..2], 16) {
+        if let Ok(g) = u8::from_str_radix(&hex[2..4], 16) {
+            if let Ok(b) = u8::from_str_radix(&hex[4..6], 16) {
+                return Color::Rgb(r, g, b);
+            }
+        }
+    }
+    Color::Reset
 }
